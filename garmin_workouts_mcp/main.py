@@ -3,13 +3,14 @@ import garth
 import os
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from .garmin_workout import make_payload
 
 LIST_WORKOUTS_ENDPOINT = "/workout-service/workouts"
 GET_WORKOUT_ENDPOINT = "/workout-service/workout/{workout_id}"
 GET_ACTIVITY_ENDPOINT = "/activity-service/activity/{activity_id}"
 GET_ACTIVITY_WEATHER_ENDPOINT = "/activity-service/activity/{activity_id}/weather"
+GET_ACTIVITY_SPLITS_ENDPOINT = "activity-service/activity/{activity_id}/splits"
 LIST_ACTIVITIES_ENDPOINT = "/activitylist-service/activities/search/activities"
 CREATE_WORKOUT_ENDPOINT = "/workout-service/workout"
 SCHEDULE_WORKOUT_ENDPOINT = "/workout-service/schedule/{workout_id}"
@@ -100,6 +101,21 @@ def list_activities(limit: int = 20, start: int = 0, activityType: str = None, s
 
     activities = garth.connectapi(LIST_ACTIVITIES_ENDPOINT, "GET", params=params)
     return {"activities": activities}
+
+@mcp.tool
+def get_activity_splits(activity_id: str) -> dict:
+    """
+    Get lap/split data for a specific activity.
+
+    Args:
+        activity_id: ID of the activity to retrieve splits for.
+
+    Returns:
+        activity splits details as a dictionary containing splits data
+    """
+    endpoint = GET_ACTIVITY_SPLITS_ENDPOINT.format(activity_id=activity_id)
+    splits = garth.connectapi(endpoint)
+    return splits
 
 @mcp.tool
 def get_activity_weather(activity_id: str) -> dict:
@@ -334,6 +350,89 @@ def generate_workout_data_prompt(description: str) -> dict:
     - For no target: "type": "no target", "value": null, "unit": null
     """}
 
+@mcp.tool
+def daily_body_battery(end_date: date | None = None, days: int = 1) -> str | list[garth.DailyBodyBatteryStress]:
+    """
+    Get daily body battery data for a given date and number of days.
+    
+    Args:
+        end_date: the last day to receive the information for (until date), default current date
+        days: number of days to get the daily body battery information, default 1
+
+    Returns:
+        daily body battery information
+    """
+    return garth.DailyBodyBatteryStress.list(end_date, days)
+
+@mcp.tool
+def daily_hrv(end_date: date | None = None, days: int = 1) -> str | list[garth.DailyHRV]:
+    """
+    Get daily heart rate variability data for a given date and number of days.
+    
+    Args:
+        end_date: the last day to receive the information for (until date), default current date
+        days: number of days to get the daily heart rate variability information, default 1
+
+    Returns:
+        daily heart rate variability data
+    """
+    return garth.DailyHRV.list(end_date, days)
+    
+
+@mcp.tool
+def hrv_data(end_date: date | None = None, days: int = 1) -> str | list[garth.HRVData]:
+    """
+    Get detailed HRV data for a given date and number of days.
+    
+    Args:
+        end_date: the last day to receive the information for (until date), default current date
+        days: number of days to get the detailed heart rate variability information, default 1
+
+    Returns:
+        detailed heart rate variability data
+    """
+    return garth.HRVData.list(end_date, days)
+
+@mcp.tool
+
+def daily_sleep(end_date: date | None = None, days: int = 1) -> str | list[garth.DailySleep]:
+    """
+    Get daily sleep summary data for a given date and number of days.
+    
+    Args:
+        end_date: the last day to receive the information for (until date), default current date
+        days: number of days to get daily sleep summary information, default 1
+
+    Returns:
+        daily sleep summary data
+    """
+    return garth.DailySleep.list(end_date, days)
+
+@mcp.tool    
+def nightly_sleep(
+    end_date: date | None = None, nights: int = 1, sleep_movement: bool = False
+) -> str | list[garth.SleepData]:
+    """
+    Get sleep stats for a given date and number of nights.
+    If no nights are provided, 1 night will be used.
+    sleep_movement provides detailed sleep movement data. If looking at
+    multiple nights, it'll be a lot of data.
+    Args:
+        end_date: the last day to receive the information for (until date), default current date
+        nights: number of nights to get the detailed sleep information, default 1
+        sleep_movement: whether to provide detailed sleep movement data (may contain a lot of data if used for many nights)
+    Returns:
+        detailed sleep stats data
+    """
+    sleep_data = garth.SleepData.list(end_date, nights)
+    if not sleep_movement:
+        for night in sleep_data:
+            if hasattr(night, "sleep_movement"):
+                del night.sleep_movement
+    return sleep_data
+
+
+
 def login():
     """Login to Garmin Connect."""
     garth_home = os.environ.get("GARTH_HOME", "~/.garth")
@@ -357,8 +456,13 @@ def login():
 
 def main():
     """Main entry point for the console script."""
+    logger.info("logging in to garmin using garth...")
     login()
-    mcp.run()
+#    mcp.run()
+    logger.info("mcp ")
+    logger.info("Starting Garmin Connect Workouts Server version 0.6.1 ...")
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=3333, path="/mcp")
+
 
 if __name__ == "__main__":
     main()
