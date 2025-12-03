@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch
-from garmin_workouts_mcp.main import mcp, login
+from garmin_workouts_mcp.main import mcp
+from garmin_workouts_mcp.common import login
 
 
 class TestMCPIntegration:

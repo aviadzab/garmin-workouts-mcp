@@ -35,6 +35,7 @@ RUN mkdir -p /home/mcpuser/.garth
 
 # Expose the port the app runs on
 EXPOSE 3333
+EXPOSE 3334
 
 # Health check
 # HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

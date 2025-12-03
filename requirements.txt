@@ -7,3 +7,7 @@ pytest-mock>=3.10.0
 pytest-asyncio>=0.21.0
 pytest-cov>=6.2.1
 ruff>=0.0.292
+fastapi~=0.121.3
+uvicorn~=0.38.0
+httpx>=0.24.0
+python-dotenv>=1.0.0

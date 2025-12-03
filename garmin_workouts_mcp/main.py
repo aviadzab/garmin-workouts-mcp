@@ -1,29 +1,21 @@
+import threading
+
 from fastmcp import FastMCP
 import garth
-import os
-import sys
-import logging
 from datetime import datetime, date
+from garmin_workouts_mcp.common import (
+    LIST_WORKOUTS_ENDPOINT,
+    GET_WORKOUT_ENDPOINT,
+    GET_ACTIVITY_ENDPOINT,
+    GET_ACTIVITY_SPLITS_ENDPOINT,
+    LIST_ACTIVITIES_ENDPOINT,
+    SCHEDULE_WORKOUT_ENDPOINT,
+    CALENDAR_WEEK_ENDPOINT,
+    CALENDAR_MONTH_ENDPOINT,
+    GET_ACTIVITY_WEATHER_ENDPOINT,
+    logger, login)
 from .garmin_workout import make_payload
 
-LIST_WORKOUTS_ENDPOINT = "/workout-service/workouts"
-GET_WORKOUT_ENDPOINT = "/workout-service/workout/{workout_id}"
-GET_ACTIVITY_ENDPOINT = "/activity-service/activity/{activity_id}"
-GET_ACTIVITY_WEATHER_ENDPOINT = "/activity-service/activity/{activity_id}/weather"
-GET_ACTIVITY_SPLITS_ENDPOINT = "activity-service/activity/{activity_id}/splits"
-LIST_ACTIVITIES_ENDPOINT = "/activitylist-service/activities/search/activities"
-CREATE_WORKOUT_ENDPOINT = "/workout-service/workout"
-SCHEDULE_WORKOUT_ENDPOINT = "/workout-service/schedule/{workout_id}"
-CALENDAR_WEEK_ENDPOINT = "/calendar-service/year/{year}/month/{month}/day/{day}/start/{start}"
-CALENDAR_MONTH_ENDPOINT = "/calendar-service/year/{year}/month/{month}"
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    stream=sys.stderr
-)
-logger = logging.getLogger(__name__)
 
 mcp = FastMCP(name="GarminConnectWorkoutsServer")
 
@@ -54,7 +46,7 @@ def get_workout(workout_id: str) -> dict:
     return {"workout": workout}
 
 @mcp.tool
-def get_activity(activity_id: str) -> dict:
+def get_activity(activity_id: str, **kwargs) -> dict:
     """
     Get details of a specific activity by its ID. An activity represents a completed run, ride, swim, etc.
 
@@ -69,7 +61,7 @@ def get_activity(activity_id: str) -> dict:
     return activity
 
 @mcp.tool
-def list_activities(limit: int = 20, start: int = 0, activityType: str = None, search: str = None) -> dict:
+def list_activities(limit: int = 20, start: int = 0, activityType: str = None, search: str = None, **kwargs) -> dict:
     """
     List activities (completed runs, rides, swims, etc.) from Garmin Connect.
 
@@ -240,8 +232,8 @@ def get_calendar(year: int, month: int, day: int = None, start: int = 1) -> dict
              If omitted, gets monthly view for the entire month.
         start: Day offset for weekly queries (defaults to 1). Controls which day of the week
                the 7-day period begins. Each increment shifts the start date forward by one day:
-               - start=0: Week starts on Sunday
-               - start=1: Week starts on Monday (DEFAULT)
+               - start=0: Week starts on Sunday (DEFAULT)
+               - start=1: Week starts on Monday
                - start=2: Week starts on Tuesday
                - start=3: Week starts on Wednesday
                - start=4: Week starts on Thursday
@@ -432,33 +424,21 @@ def nightly_sleep(
     return sleep_data
 
 
-
-def login():
-    """Login to Garmin Connect."""
-    garth_home = os.environ.get("GARTH_HOME", "~/.garth")
-    try:
-        garth.resume(garth_home)
-    except Exception:
-        email = os.environ.get("GARMIN_EMAIL")
-        password = os.environ.get("GARMIN_PASSWORD")
-
-        if not email or not password:
-            raise ValueError("Garmin email and password must be provided via environment variables (GARMIN_EMAIL, GARMIN_PASSWORD).")
-
-        try:
-            garth.login(email, password)
-        except Exception as e:
-            logger.error("Login failed: %s", e)
-            sys.exit(1)
-
-        # Save credentials for future use
-        garth.save(garth_home)
-
 def main():
     """Main entry point for the console script."""
     logger.info("logging in to garmin using garth...")
     login()
-#    mcp.run()
+
+    # Start FastAPI health check service in a separate thread
+    logger.info("Starting FastAPI health service on port 3334...")
+    def run_fastapi():
+        import uvicorn
+        from garmin_workouts_mcp.http_service import fastapi_app
+        uvicorn.run(fastapi_app, host="0.0.0.0", port=3334, log_level="info")
+
+    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+    fastapi_thread.start()
+
     logger.info("mcp ")
     logger.info("Starting Garmin Connect Workouts Server version 0.6.1 ...")
     mcp.run(transport="streamable-http", host="0.0.0.0", port=3333, path="/mcp")

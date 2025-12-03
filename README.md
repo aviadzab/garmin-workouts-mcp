@@ -68,18 +68,19 @@ To log in out-of-band:
     ```bash
     pip install garth
     ```
-2.  Run the following Python script in your terminal:
-    ```python
-    import garth
-    from getpass import getpass
+2. Run the following Python script in your terminal:
+   ```python
+import garmin_workouts_mcp.common
+   import garth
+   from getpass import getpass
 
-    email = input("Enter email address: ")
-    password = getpass("Enter password: ")
-    # If there's MFA, you'll be prompted during the login
-    garth.login(email, password)
+   email = input("Enter email address: ")
+   password = getpass("Enter password: ")
+   # If there's MFA, you'll be prompted during the login
+garmin_workouts_mcp.common.login(email, password)
 
-    garth.save("~/.garth")
-    ```
+   garth.save("~/.garth")
+   ```
     Follow the prompts to enter your Garmin Connect email and password. Upon successful login, `garth` will save your authentication tokens to `~/.garth`.
 
     The MCP server will automatically look for these saved tokens. If you wish to store them in a custom location, you can set the `GARTH_HOME` environment variable.
