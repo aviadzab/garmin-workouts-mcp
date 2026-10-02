@@ -277,8 +277,7 @@ def process_target(workout_step: dict, step: dict) -> None:
 
     if step["target"].get("value"):
         target_values = convert_target_values(step, target_type_key)
-        workout_step["targetValueOne"] = target_values["targetValueOne"]
-        workout_step["targetValueTwo"] = target_values["targetValueTwo"]
+        workout_step.update(target_values)
 
 
 def convert_target_values(step: dict, target_type_key: str) -> dict:
@@ -296,7 +295,7 @@ def convert_target_values(step: dict, target_type_key: str) -> dict:
         min_value, max_value = step["target"]["value"]
     else:
         min_value, max_value = calculate_value_range(step["target"]["value"], target_type_key)
-
+    target_dict = {}
     target_value_one = convert_value_to_unit(min_value, step["target"].get("unit"))
     target_value_two = convert_value_to_unit(max_value, step["target"].get("unit"))
 
@@ -306,12 +305,18 @@ def convert_target_values(step: dict, target_type_key: str) -> dict:
         # After conversion, higher m/s value = faster pace, lower m/s value = slower pace
         if target_value_one < target_value_two:
             target_value_one, target_value_two = target_value_two, target_value_one
+    elif target_type_key == "heart rate" and step["target"].get("unit") == "zone":
+        target_value_one = None
+        target_value_two = None
+        target_dict["targetValueUnit"] = None
+        target_dict["zoneNumber"] = step["target"].get("value")
     else:
         # For other target types, ensure targetValueOne <= targetValueTwo
         if target_value_one > target_value_two:
             target_value_one, target_value_two = target_value_two, target_value_one
-
-    return {"targetValueOne": target_value_one, "targetValueTwo": target_value_two}
+    target_dict["targetValueOne"] = target_value_one
+    target_dict["targetValueTwo"] = target_value_two
+    return target_dict
 
 
 def calculate_value_range(value: float, target_type_key: str) -> Tuple[float, float]:

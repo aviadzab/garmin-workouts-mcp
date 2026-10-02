@@ -3,6 +3,9 @@ import threading
 from fastmcp import FastMCP
 import garth
 from datetime import datetime, date
+from pydantic import BaseModel, ConfigDict
+from typing import Any, Dict, Optional
+
 from garmin_workouts_mcp.common import (
     LIST_WORKOUTS_ENDPOINT,
     GET_WORKOUT_ENDPOINT,
@@ -13,11 +16,34 @@ from garmin_workouts_mcp.common import (
     CALENDAR_WEEK_ENDPOINT,
     CALENDAR_MONTH_ENDPOINT,
     GET_ACTIVITY_WEATHER_ENDPOINT,
-    logger, login)
+    logger, login, generate_workout_data_prompt_logic)
 from .garmin_workout import make_payload
 
 
 mcp = FastMCP(name="GarminConnectWorkoutsServer")
+
+# Pydantic input models - ignore extra fields from n8n
+class GetActivityInput(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+    activity_id: str
+
+
+class ListActivitiesInput(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+    limit: int = 20
+    start: int = 0
+    activityType: Optional[str] = None
+    search: Optional[str] = None
+
+
+class GetCalendarInput(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+    year: int
+    month: int
+    day: Optional[int] = None
+    start: int = 1
+    # Allow callers to pass a 'view' or other extra fields; they will be ignored.
+
 
 @mcp.tool
 def list_workouts() -> dict:
@@ -46,50 +72,54 @@ def get_workout(workout_id: str) -> dict:
     return {"workout": workout}
 
 @mcp.tool
-def get_activity(activity_id: str, **kwargs) -> dict:
+def get_activity(input: Any) -> dict:
     """
     Get details of a specific activity by its ID. An activity represents a completed run, ride, swim, etc.
 
     Args:
-        activity_id: ID of the activity to retrieve. As returned by the `get_calendar` tool.
+        input: either a GetActivityInput instance or a dict with at least `activity_id` (extra fields ignored)
 
     Returns:
         Activity details as a dictionary.
     """
-    endpoint = GET_ACTIVITY_ENDPOINT.format(activity_id=activity_id)
+    # coerce dicts/other mappings into the Pydantic model to ignore extras
+    if isinstance(input, dict):
+        input = GetActivityInput.model_validate(input)
+    elif not isinstance(input, GetActivityInput):
+        # allow raw values too (e.g., direct activity_id string)
+        try:
+            input = GetActivityInput.model_validate(input)
+        except Exception:
+            # fallback: assume input is activity_id
+            input = GetActivityInput.model_validate({"activity_id": input})
+
+    endpoint = GET_ACTIVITY_ENDPOINT.format(activity_id=input.activity_id)
     activity = garth.connectapi(endpoint)
     return activity
 
 @mcp.tool
-def list_activities(limit: int = 20, start: int = 0, activityType: str = None, search: str = None, **kwargs) -> dict:
+def list_activities(input: Any) -> dict:
     """
     List activities (completed runs, rides, swims, etc.) from Garmin Connect.
 
     Args:
-        limit: Number of activities to return (default=20)
-        start: Starting position for pagination (default=0)
-        activityType: Filter by activity type. Accepted values include:
-            - "auto_racing", "backcountry_skiing_snowboarding_ws", "bouldering", "breathwork"
-            - "cross_country_skiing_ws", "cycling", "diving", "e_sport", "fitness_equipment"
-            - "hiking", "indoor_climbing", "motorcycling", "multi_sport", "offshore_grinding"
-            - "onshore_grinding", "other", "resort_skiing_snowboarding_ws", "running"
-            - "safety", "skate_skiing_ws", "surfing", "swimming", "walking"
-            - "windsurfing", "winter_sports", "yoga"
-        search: Search for activities containing this string in their name
+        input: either a ListActivitiesInput instance or a dict (extra fields ignored). Contains:
+            - limit, start, activityType, search
 
     Returns:
         A dictionary containing a list of activities and pagination info.
     """
-    params = {
-        "limit": limit,
-        "start": start
-    }
+    # coerce dicts/other mappings into the Pydantic model to ignore extras
+    if isinstance(input, dict):
+        input = ListActivitiesInput.model_validate(input)
+    elif not isinstance(input, ListActivitiesInput):
+        input = ListActivitiesInput.model_validate(input)
 
-    if activityType is not None:
-        params["activityType"] = activityType
-
-    if search is not None:
-        params["search"] = search
+    params: Dict[str, Any] = {"limit": input.limit, "start": input.start}
+    if input.activityType is not None:
+        params["activityType"] = input.activityType
+    if input.search is not None:
+        params["search"] = input.search
 
     activities = garth.connectapi(LIST_ACTIVITIES_ENDPOINT, "GET", params=params)
     return {"activities": activities}
@@ -221,24 +251,13 @@ def upload_workout(workout_data: dict) -> dict:
         raise Exception(f"Failed to upload workout to Garmin Connect: {str(e)}")
 
 @mcp.tool
-def get_calendar(year: int, month: int, day: int = None, start: int = 1) -> dict:
+def get_calendar(input: Any) -> dict:
     """
     Get calendar data from Garmin Connect for different time periods.
 
     Args:
-        year: Year (e.g., 2025)
-        month: Month (1-12)
-        day: Day of month (1-31). If provided, gets corresponding weekly view that includes this day.
-             If omitted, gets monthly view for the entire month.
-        start: Day offset for weekly queries (defaults to 1). Controls which day of the week
-               the 7-day period begins. Each increment shifts the start date forward by one day:
-               - start=0: Week starts on Sunday (DEFAULT)
-               - start=1: Week starts on Monday
-               - start=2: Week starts on Tuesday
-               - start=3: Week starts on Wednesday
-               - start=4: Week starts on Thursday
-               And so on. Different start values return different 7-day windows with varying
-               calendar items, useful for different training schedules and calendar preferences.
+        input: GetCalendarInput or dict with fields `year`, `month`, optional `day` and `start`.
+               Extra fields are ignored.
 
     Returns:
         Calendar data with workouts and activities for the specified period.
@@ -246,30 +265,36 @@ def get_calendar(year: int, month: int, day: int = None, start: int = 1) -> dict
     Raises:
         ValueError: If any of the date parameters are invalid.
     """
-    # Input validation
-    if not (1900 <= year <= 2100):
-        raise ValueError(f"Year must be between 1900 and 2100, got {year}")
+    # coerce dicts/other mappings into the Pydantic model to ignore extras
+    if isinstance(input, dict):
+        input = GetCalendarInput.model_validate(input)
+    elif not isinstance(input, GetCalendarInput):
+        input = GetCalendarInput.model_validate(input)
 
-    if not (1 <= month <= 12):
-        raise ValueError(f"Month must be between 1 and 12, got {month}")
+    # Input validation (same checks as before)
+    if not (1900 <= input.year <= 2100):
+        raise ValueError(f"Year must be between 1900 and 2100, got {input.year}")
 
-    if day is not None:
-        if not (1 <= day <= 31):
-            raise ValueError(f"Day must be between 1 and 31, got {day}")
+    if not (1 <= input.month <= 12):
+        raise ValueError(f"Month must be between 1 and 12, got {input.month}")
+
+    if input.day is not None:
+        if not (1 <= input.day <= 31):
+            raise ValueError(f"Day must be between 1 and 31, got {input.day}")
 
     # Convert month from 1-based (human readable) to 0-based (Garmin API)
-    garmin_month = month - 1
+    garmin_month = input.month - 1
 
-    if day is not None:
+    if input.day is not None:
         # Weekly view
         endpoint = CALENDAR_WEEK_ENDPOINT.format(
-            year=year, month=garmin_month, day=day, start=start
+            year=input.year, month=garmin_month, day=input.day, start=input.start
         )
         view_type = "week"
     else:
         # Monthly view (default)
         endpoint = CALENDAR_MONTH_ENDPOINT.format(
-            year=year, month=garmin_month
+            year=input.year, month=garmin_month
         )
         view_type = "month"
 
@@ -279,10 +304,10 @@ def get_calendar(year: int, month: int, day: int = None, start: int = 1) -> dict
         "calendar": calendar_data,
         "view_type": view_type,
         "period": {
-            "year": year,
-            "month": month,
-            "day": day,
-            "start": start if day else None
+            "year": input.year,
+            "month": input.month,
+            "day": input.day,
+            "start": input.start if input.day else None,
         }
     }
 
@@ -299,48 +324,7 @@ def generate_workout_data_prompt(description: str) -> dict:
         Prompt for the LLM to generate structured workout data
     """
 
-    return {"prompt": f"""
-    You are a fitness coach.
-    Given the following workout description, create a structured JSON object that represents the workout.
-    The generated JSON should be compatible with the `upload_workout` tool.
-
-    Workout Description:
-    {description}
-
-    Requirements:
-    - The output must be valid JSON.
-    - For pace targets, use decimal minutes per km (e.g., 4:40 min/km = 4.67 minutes per km)
-    - For time-based steps, use stepDuration in seconds
-    - For distance-based steps, use stepDistance with appropriate distanceUnit
-    - Use the following structure for the workout object:
-    {{
-    "name": "Workout Name",
-    "type": "running" | "cycling" | "swimming" | "walking" | "cardio" | "strength",
-    "steps": [
-        {{
-        "stepName": "Step Name",
-        "stepDescription": "Description",
-        "endConditionType": "time" | "distance",
-        "stepDuration": duration_in_seconds,
-        "stepDistance": distance_value,
-        "distanceUnit": "m" | "km" | "mile",
-        "stepType": "warmup" | "cooldown" | "interval" | "recovery" | "rest" | "repeat",
-        "target": {{
-            "type": "no target" | "pace" | "heart rate" | "power" | "cadence" | "speed",
-            "value": [minValue, maxValue] | singleValue,
-            "unit": "min_per_km" | "bpm" | "watts"
-        }},
-        "numberOfIterations": number,
-        "steps": []
-        }}
-    ]
-    }}
-
-    Examples:
-    - For 4:40 min/km pace: "value": 4.67 or "value": [4.5, 4.8]
-    - For 160 bpm heart rate: "value": 160 or "value": [150, 170]
-    - For no target: "type": "no target", "value": null, "unit": null
-    """}
+    return generate_workout_data_prompt_logic(description)
 
 @mcp.tool
 def daily_body_battery(end_date: date | None = None, days: int = 1) -> str | list[garth.DailyBodyBatteryStress]:

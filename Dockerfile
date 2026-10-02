@@ -25,6 +25,7 @@ RUN pip install --no-cache-dir -e .
 
 # Copy the application code
 COPY garmin_workouts_mcp/ ./garmin_workouts_mcp/
+COPY sitecustomize.py /usr/local/lib/python3.10/site-packages/sitecustomize.py
 
 # Create a non-root user for security
 RUN useradd -m -u 1000 mcpuser && chown -R mcpuser:mcpuser /app

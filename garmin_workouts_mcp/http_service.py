@@ -1,12 +1,24 @@
+import os
+
 import garth
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import datetime
 
-from garmin_workouts_mcp.common import CALENDAR_WEEK_ENDPOINT, login, GET_WORKOUT_ENDPOINT
+from garminconnect import Garmin
+
+from garmin_workouts_mcp.common import CALENDAR_WEEK_ENDPOINT, login, GET_WORKOUT_ENDPOINT, \
+    generate_workout_data_prompt_logic, LIST_WORKOUTS_ENDPOINT, GET_ACTIVITY_SPLITS_ENDPOINT, \
+    GET_ACTIVITY_DETAILS_ENDPOINT
 
 fastapi_app = FastAPI()
 login()
+
+garmin = Garmin(
+    os.getenv("GARMIN_EMAIL"),
+    os.getenv("GARMIN_PASSWORD")
+)
+garmin.login()
 
 
 def serialize_object(obj):
@@ -61,4 +73,61 @@ def get_sleep_report():
         report["hrv"] = serialize_object(hrv_data[0])
 
     return JSONResponse(content={"status": "ok", "hasSleep": has_sleep, "report": report})
+
+@fastapi_app.get("/getGeneratedWorkoutPrompt")
+def generate_workout_prompt(description: str):
+    return generate_workout_data_prompt_logic(description)
+
+
+@fastapi_app.get("/getWorkoutsList")
+def get_workout_summaries():
+    workouts = garth.connectapi(LIST_WORKOUTS_ENDPOINT)
+    out_workouts = []
+    fields_to_keep = ["workoutId", "workoutName", "description","sportType","estimatedDurationInSecs","estimatedDistanceInMeters"]
+    for workout in workouts:
+        out_workouts.append( {key: workout[key] for key in fields_to_keep if key in workout})
+    return {"workouts": out_workouts}
+
+@fastapi_app.get("/getUserData")
+def get_user_data():
+    predictor_data = garmin.get_race_predictions()
+    return {"user_profile": garth.UserProfile.get(), "user_settings": garth.UserSettings.get()}
+
+@fastapi_app.get("/getActivitySplitsAndDetails")
+def get_activity_splits_and_details(activity_id: str):
+    """Get splits and details for a specific activity.
+    
+    Args:
+        activity_id: The ID of the activity to retrieve splits and details for.
+        
+    Returns:
+        JSON response containing splits and activity details.
+    """
+    if not activity_id:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "activity_id parameter is required"}
+        )
+    
+    try:
+        # Get activity splits
+        splits_endpoint = GET_ACTIVITY_SPLITS_ENDPOINT.format(activity_id=activity_id)
+        splits_data = garth.connectapi(splits_endpoint)
+        
+        # Get activity details
+        details_endpoint = GET_ACTIVITY_DETAILS_ENDPOINT.format(activity_id=activity_id)
+        details_data = garth.connectapi(details_endpoint)
+        
+        return JSONResponse(content={
+            "status": "ok",
+            "activityId": activity_id,
+            "splits": splits_data,
+            "details": details_data
+        })
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
 
